@@ -36,16 +36,18 @@ pub fn Main() -> Element {
                     },
                     onkeydown : move |event| {
                         if event.code().to_string() == "Enter".to_string() {
-                            println!("{:?}", item)
+                            println!("{:?}", item);
+                            items.write().push(item());
+                            println!("{:?}", items);
                         }
                     }
                 }
             },
             div {
-                for i in 1..5 {
+                for item in items.iter() {
                     div {
                         class : "todo-item",
-                        label { {i.to_string()} },
+                        label { {item.to_string()} },
                         button {
                             class : "delete-button",
                             "Delete"
