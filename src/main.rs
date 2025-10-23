@@ -1,8 +1,7 @@
 use dioxus::prelude::*;
+use rusqlite::Connection;
 
-const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
-const HEADER_SVG: Asset = asset!("/assets/header.svg");
 
 fn main() {
     dioxus::launch(App);
@@ -10,51 +9,123 @@ fn main() {
 
 #[component]
 fn App() -> Element {
-    rsx! {
-        document::Link { rel: "icon", href: FAVICON }
-        document::Link { rel: "stylesheet", href: MAIN_CSS }
-        Main {}
 
+    // A signal to store the Database connection
+    let con = use_signal(|| Connection::open("./data.db3").unwrap());
+
+    // A signal to store a vector of TodoItems
+    let mut todos = use_signal(
+        Vec::<TodoItem>::new
+    );
+
+    // Runs after the component has rendered.
+    use_effect(move || {
+        let writer = con.read();
+
+        // Get the todo items from the database and add it to the todo signal
+
+        let mut stm = writer.prepare("SELECT id, name FROM todo").unwrap();
+
+        let rows = stm.query_map((), |row| {
+            Ok(TodoItem {
+                id : row.get(0).unwrap(),
+                name    : row.get(1).unwrap(),
+                is_checked : false
+            })
+        }).unwrap();
+
+        // clear the todo vector when the use_effect runs again.
+        // This is stop duplicated items from appearing.
+        todos.write().clear();
+
+        for row in rows {
+            let item = row.unwrap();
+            todos.write().push(item);
+        }
+    });
+   
+    rsx! {
+        document::Link { rel: "stylesheet", href: MAIN_CSS }
+        Main { con : con, todos }
     }
 }
 
 #[component]
-pub fn Main() -> Element {
-    let mut item: Signal<String> = use_signal(|| { String::new() });
+pub fn Main(con : Signal<Connection>, todos : Signal<Vec<TodoItem>>) -> Element {
 
-    let mut items: Signal<Vec<String>> = use_signal(Vec::<String>::new);
+    // A signal to store the todo item being entred.
+    let mut item = use_signal(|| {
+        String::new()
+    });
+
+    // Add a todo item to the database
+    let mut add_item = move |item : String| {
+        con.write().execute(
+            "INSERT INTO todo (name) VALUES(?1)", 
+            [&item]).unwrap();
+    };
+
+    // Delete a todo item from the database
+    // This closure is used as a callback function.
+    let update = move |item: TodoItem| {
+        con.write().execute(
+            "DELETE FROM todo WHERE id = ?1", 
+            [&item.id]).unwrap();
+
+    };
 
     rsx! {
         div {
             div {
                 class : "header",
                 input {
+                    id : "name",
                     type : "text",
                     class : "input",
-                    oninput : move |event| {
-                        item.set(event.value());
+                    value : item,
+                    placeholder : "Enter a todo",
+                    oninput : move |e| {
+                        item.set(e.value());
                     },
                     onkeydown : move |event| {
-                        if event.code().to_string() == "Enter".to_string() {
-                            println!("{:?}", item);
-                            items.write().push(item());
-                            println!("{:?}", items);
+                        if event.code().to_string() == "Enter".to_string()  {
+                            add_item(item.to_string());
+                            item.set("".to_string());
                         }
                     }
                 }
             },
             div {
-                for item in items.iter() {
-                    div {
-                        class : "todo-item",
-                        label { {item.to_string()} },
-                        button {
-                            class : "delete-button",
-                            "Delete"
-                        }
+                div {
+                    for item in todos.read().iter() {
+                        TodoElement {item : item.clone(), callback : update }
                     }
                 }
             }
         }
     }
+}
+
+#[component]
+fn TodoElement(item : TodoItem, callback : Callback<TodoItem>) -> Element{
+    rsx!(
+        div {
+            class : "todo-item",
+            label { {item.name.to_string()} },
+            button {
+                class : "delete-button",
+                onclick : move |_| {
+                    callback(item.clone())
+                },
+                "X"
+            }
+        }
+    )
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct TodoItem {
+    id : u32,
+    name : String,
+    is_checked : bool
 }
